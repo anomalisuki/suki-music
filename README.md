@@ -1,29 +1,24 @@
-# Suki Music — Vercel
+# Suki Music — Vercel backend
 
-Website ini menggunakan:
+Frontend mengikuti tampilan referensi `suki-music-vercel-fixed-downr(2).zip`.
 
-- `index.html` sebagai frontend.
-- `/api/search.js` sebagai proxy/serverless function untuk YouTube Music Search.
-- `/api/download.js` sebagai proxy/serverless function untuk Downr.
-- `package.json` untuk dependency Node.js.
-- `vercel.json` untuk konfigurasi function.
+## Endpoint
 
-## Deploy ke Vercel
+Search:
+`/api/search?q=What%20If%20I%20Call&limit=20`
 
-1. Upload/import folder ini sebagai project Vercel.
-2. Tambahkan Environment Variable:
+Download resolver:
+`/api/download?url=https%3A%2F%2Fmusic.youtube.com%2Fwatch%3Fv%3DVIDEO_ID`
 
-   `YouTube Music API key is already embedded in `api/search.js`` = API key YouTube Music yang digunakan script search.
+## YouTube Music key
 
-3. Deploy.
-4. Buka domain Vercel.
+API key tetap menggunakan key yang sudah ada di script asli, di `api/search.js`.
+Tidak perlu Environment Variable untuk key tersebut.
 
-## Alur
+## Audio selection
 
-Browser → `/api/search` → YouTube Music
+`/api/download` meminta response Downr, mengambil `medias[]` dengan `type=audio`, memprioritaskan `m4a`, lalu memilih bitrate yang paling dekat dengan 128 kbps. Jika Downr tidak memberikan `medias[]` tetapi memberikan `url`, URL tersebut digunakan sebagai fallback.
 
-Browser → `/api/download` → Downr → response `medias[]`
+## Deploy
 
-Backend memilih media `type=audio`, mengutamakan `m4a`, kemudian memilih bitrate yang paling dekat dengan 128 kbps.
-
-URL media akhir tetap merupakan URL dari provider sehingga frontend tidak perlu melakukan `fetch()` cross-origin terhadap Downr.
+Import repository ke Vercel. Tidak membutuhkan build command khusus.
