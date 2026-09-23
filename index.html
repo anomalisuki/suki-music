@@ -1,146 +1,63 @@
 <!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Suki Music</title>
-<style>
-:root{color-scheme:dark}
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f14;color:#f4f7fb}
-.wrap{max-width:760px;margin:auto;padding:28px 16px 50px}
-h1{font-size:28px;margin:0 0 6px}
-.sub{color:#9ca8b7;margin:0 0 22px}
-.search{display:flex;gap:10px}
-input{flex:1;min-width:0;background:#151b23;border:1px solid #293241;color:#fff;border-radius:14px;padding:14px 15px;font-size:16px;outline:none}
-button{border:0;border-radius:14px;padding:0 18px;font-weight:700;background:#fff;color:#111;cursor:pointer}
-button:disabled{opacity:.5;cursor:wait}
-.status{min-height:24px;color:#9ca8b7;margin:16px 2px}
-.card{display:flex;gap:13px;padding:12px;margin:10px 0;background:#121820;border:1px solid #202a37;border-radius:16px}
-.thumb{width:82px;height:82px;border-radius:11px;object-fit:cover;background:#202733}
-.info{min-width:0;flex:1}
-.title{font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.meta{color:#9ca8b7;font-size:13px;margin-top:5px;line-height:1.45}
-.actions{display:flex;gap:8px;margin-top:10px}
-.actions button,.actions a{padding:8px 12px;border-radius:10px;font-size:13px;text-decoration:none}
-.actions button{background:#fff;color:#111}
-.actions a{background:#202a37;color:#fff}
-.empty{padding:28px;text-align:center;color:#8995a4;border:1px dashed #293241;border-radius:16px}
-audio{width:100%;margin-top:14px}
-.note{font-size:12px;color:#7f8a99;line-height:1.5;margin-top:18px}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090909">
+  <title>Suki Music</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="wrap">
-  <h1>Suki Music</h1>
-  <p class="sub">Cari lagu YouTube Music lalu pilih audio standar untuk diputar atau diunduh.</p>
+  <main class="app">
+    <header class="header">
+      <div class="brand">
+        <div class="logo">♪</div>
+        <div>
+          <h1>Suki Music</h1>
+          <p>Search &amp; play music</p>
+        </div>
+      </div>
+    </header>
 
-  <div class="search">
-    <input id="q" placeholder="Cari judul lagu..." autocomplete="off">
-    <button id="searchBtn">Cari</button>
+    <section class="search-box">
+      <form id="searchForm">
+        <input
+          id="query"
+          type="search"
+          autocomplete="off"
+          placeholder="Cari lagu, artis, album..."
+          aria-label="Cari lagu"
+          required
+        >
+        <button id="searchButton" type="submit">Cari</button>
+      </form>
+    </section>
+
+    <div id="status" class="status hidden"></div>
+
+    <section id="results" class="results"></section>
+
+    <section id="empty" class="empty">
+      <div class="empty-icon">♫</div>
+      <h2>Cari lagu</h2>
+      <p>Masukkan judul lagu atau nama artis untuk mulai.</p>
+    </section>
+  </main>
+
+  <div id="playerBar" class="player-bar hidden">
+    <div class="now-playing">
+      <img id="playerThumb" src="" alt="">
+      <div class="now-text">
+        <strong id="playerTitle">-</strong>
+        <span id="playerArtist">-</span>
+      </div>
+    </div>
+
+    <audio id="audioPlayer" controls preload="none"></audio>
+
+    <button id="closePlayer" class="close-player" type="button" aria-label="Tutup player">×</button>
   </div>
 
-  <div id="status" class="status"></div>
-  <div id="results"></div>
-  <div id="player"></div>
-
-  <p class="note">
-    Link media dari YouTube/Downr bersifat sementara. Browser dapat memutar atau mengunduh
-    langsung dari URL tersebut; hasil unduhan dapat mengikuti kebijakan browser/perangkat.
-  </p>
-</div>
-
-<script>
-const $ = id => document.getElementById(id);
-function setStatus(t){ $('status').textContent = t || ''; }
-function esc(s){
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-async function api(path, params={}){
-  const url = new URL(path, location.origin);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k,v));
-  const res = await fetch(url);
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch { throw new Error(`Server mengembalikan response tidak valid (HTTP ${res.status}).`); }
-  if(!res.ok || data.status === false) throw new Error(data.message || `HTTP ${res.status}`);
-  return data;
-}
-
-async function downloadSelected(song, button){
-  button.disabled = true;
-  button.textContent = 'Memproses...';
-  try{
-    setStatus('Membuat link audio...');
-    const result = await api('/api/download', { url: song.watchUrl });
-    const audio = result.data.audio;
-    if(!audio?.url) throw new Error('Link audio tidak ditemukan.');
-
-    $('player').innerHTML = `
-      <div class="card" style="display:block">
-        <div class="title">${esc(result.data.title || song.title || 'Audio')}</div>
-        <div class="meta">${esc(audio.extension || 'audio')} • ${esc(audio.bitrateKbps || '?')} kbps${audio.size ? ' • '+esc(audio.size) : ''}</div>
-        <audio controls autoplay src="${esc(audio.url)}"></audio>
-        <div class="actions">
-          <a href="${esc(audio.url)}" target="_blank" rel="noopener">Buka link audio</a>
-          <a href="${esc(audio.url)}" target="_blank" rel="noopener" download>Download</a>
-        </div>
-      </div>`;
-
-    setStatus(`Audio siap • ${audio.extension || 'audio'} • ${audio.bitrateKbps || '?'} kbps`);
-  }catch(e){
-    setStatus('Gagal: ' + e.message);
-  }finally{
-    button.disabled = false;
-    button.textContent = 'Download audio';
-  }
-}
-
-function render(items){
-  const box = $('results');
-  if(!items.length){ box.innerHTML = '<div class="empty">Lagu tidak ditemukan.</div>'; return; }
-  box.innerHTML = '';
-  items.slice(0,20).forEach(song=>{
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <img class="thumb" src="${esc(song.thumbnail || '')}" alt="">
-      <div class="info">
-        <div class="title">${esc(song.title || 'Tanpa judul')}</div>
-        <div class="meta">
-          ${esc((song.artists || []).join(', ') || 'Unknown artist')}
-          ${song.album ? ' • '+esc(song.album) : ''}
-          ${song.duration ? ' • '+esc(song.duration) : ''}
-        </div>
-        <div class="actions">
-          <button class="download">Download audio</button>
-          <a href="${esc(song.watchUrl)}" target="_blank" rel="noopener">YouTube Music</a>
-        </div>
-      </div>`;
-    card.querySelector('.download').addEventListener('click', e => downloadSelected(song,e.currentTarget));
-    box.appendChild(card);
-  });
-}
-
-async function search(){
-  const query = $('q').value.trim();
-  if(!query){ setStatus('Masukkan judul lagu.'); return; }
-  $('searchBtn').disabled = true;
-  setStatus('Mencari di YouTube Music...');
-  $('results').innerHTML = '';
-  $('player').innerHTML = '';
-  try{
-    const result = await api('/api/search', { q: query, limit: 20 });
-    const items = result.data?.items || [];
-    render(items);
-    setStatus(items.length ? `${items.length} hasil ditemukan.` : 'Tidak ada hasil.');
-  }catch(e){ setStatus('Gagal: '+e.message); }
-  finally{ $('searchBtn').disabled = false; }
-}
-
-$('searchBtn').addEventListener('click', search);
-$('q').addEventListener('keydown', e => { if(e.key === 'Enter') search(); });
-</script>
+  <script src="/app.js"></script>
 </body>
 </html>
