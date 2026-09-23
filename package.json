@@ -1,9 +1,16 @@
 {
   "name": "suki-music-vercel",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Suki Music - YouTube Music search with Vercel serverless Downr audio resolver.",
-  "scripts": {"start": "vercel dev"},
-  "engines": {"node": "24.x"},
-  "dependencies": {"axios": "^1.7.9"}
+  "description": "Suki Music - YouTube Music search with yt-dlp audio resolver.",
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "youtube-dl-exec": "^3.1.15"
+  }
 }
