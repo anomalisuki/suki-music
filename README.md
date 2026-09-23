@@ -1,27 +1,24 @@
-# Suki Music — yt-dlp edition
+# Suki Music — Vercel backend
 
-Versi ini mengganti resolver Downr dengan **yt-dlp**. Frontend tetap memakai endpoint:
+Frontend mengikuti tampilan referensi `suki-music-vercel-fixed-downr(2).zip`.
 
-- `GET /api/search?q=...&limit=20`
-- `GET /api/download?url=...`
+## Endpoint
 
-## Cara deploy
+Search:
+`/api/search?q=What%20If%20I%20Call&limit=20`
 
-1. Upload seluruh isi folder ini ke repository GitHub.
-2. Import repository tersebut ke Vercel.
-3. Gunakan framework/preset yang sesuai dengan project Node.js/Vercel.
-4. Deploy tanpa Cloudflare Worker.
+Download resolver:
+`/api/download?url=https%3A%2F%2Fmusic.youtube.com%2Fwatch%3Fv%3DVIDEO_ID`
 
-## Resolver audio
+## YouTube Music key
 
-`api/download.js` menjalankan yt-dlp dengan mode metadata saja (`--dump-single-json --skip-download`).
+API key tetap menggunakan key yang sudah ada di script asli, di `api/search.js`.
+Tidak perlu Environment Variable untuk key tersebut.
 
-Audio dipilih dari format audio-only. Jika tersedia M4A, M4A diprioritaskan, kemudian bitrate yang paling dekat dengan 128 kbps dipilih.
+## Audio selection
 
-Project memakai `youtube-dl-exec`, yang memasang binary yt-dlp saat proses npm install/build. Dokumentasi package menyebut wrapper ini menjalankan yt-dlp dan mengunduh binary saat build. Untuk dukungan YouTube terbaru, yt-dlp juga menggunakan EJS dan JavaScript runtime; kode mengaktifkan Node sebagai runtime dan meminta EJS dari GitHub.
+`/api/download` meminta response Downr, mengambil `medias[]` dengan `type=audio`, memprioritaskan `m4a`, lalu memilih bitrate yang paling dekat dengan 128 kbps. Jika Downr tidak memberikan `medias[]` tetapi memberikan `url`, URL tersebut digunakan sebagai fallback.
 
-## Contoh test
+## Deploy
 
-`/api/download?url=https%3A%2F%2Fmusic.youtube.com%2Fwatch%3Fv%3DaMqOtlVwQYM`
-
-Jika YouTube/yt-dlp menolak request dari IP Vercel, respons akan menunjukkan error yt-dlp pada `stage: "yt-dlp"`.
+Import repository ke Vercel. Tidak membutuhkan build command khusus.
