@@ -1,48 +1,93 @@
-const axios = require('axios');
+const axios = require("axios");
 
-const BASE = 'https://music.youtube.com';
+const BASE = "https://music.youtube.com";
 const API_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30";
-const CLIENT_VERSION = '1.20260915.14.00';
+const CLIENT_VERSION =
+  process.env.YOUTUBE_CLIENT_VERSION || "1.20260915.14.00";
+
+const UA =
+  "Mozilla/5.0 (Linux; Android 13; SM-A536E) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 
 const PARAMS = {
-  songs: 'EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D'
+  all: "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D",
+  songs: "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D",
+  videos: "EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D",
+  albums: "EgWKAQIoAWoKEAkQChAFEAMQBA%3D%3D",
+  playlists: "EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D",
+  artists: "EgWKAQJQAWoKEAkQChAFEAMQBA%3D%3D"
 };
 
+const client = axios.create({
+  timeout: 25000,
+  headers: {
+    "User-Agent": UA,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
+    "Origin": BASE,
+    "Referer": BASE + "/"
+  },
+  validateStatus: status => status < 600,
+  transformResponse: [data => data]
+});
+
 function getThumbnail(item) {
-  const thumbs = item?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails;
+  const thumbs =
+    item?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails;
+
   if (!Array.isArray(thumbs) || !thumbs.length) return null;
+
   return thumbs[thumbs.length - 1]?.url || thumbs[0]?.url || null;
 }
 
 function isVideoId(id) {
-  return typeof id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id);
+  return typeof id === "string" && /^[A-Za-z0-9_-]{11}$/.test(id);
 }
 
 function pickMusicItem(renderer) {
-  const item = renderer?.musicResponsiveListItemRenderer;
+  if (!renderer) return null;
+
+  const item = renderer.musicResponsiveListItemRenderer;
   if (!item) return null;
 
   const videoId =
     item?.playlistItemData?.videoId ||
-    item?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId ||
+    item?.overlay?.musicItemThumbnailOverlayRenderer?.content
+      ?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint
+      ?.videoId ||
     item?.navigationEndpoint?.watchEndpoint?.videoId ||
     null;
 
-  const browseId = item?.navigationEndpoint?.browseEndpoint?.browseId || null;
-  const pageType = item?.navigationEndpoint?.browseEndpoint
-    ?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType || null;
+  const browseId =
+    item?.navigationEndpoint?.browseEndpoint?.browseId || null;
+
+  const pageType =
+    item?.navigationEndpoint?.browseEndpoint
+      ?.browseEndpointContextSupportedConfigs
+      ?.browseEndpointContextMusicConfig?.pageType || null;
 
   const flexTexts = [];
-  for (const column of item.flexColumns || []) {
-    const runs = column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
-    if (Array.isArray(runs)) {
-      const text = runs.map(run => run?.text || '').join('').trim();
-      if (text) flexTexts.push(text);
+
+  if (Array.isArray(item.flexColumns)) {
+    for (const column of item.flexColumns) {
+      const runs =
+        column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs;
+
+      if (Array.isArray(runs)) {
+        const text = runs
+          .map(run => run?.text || "")
+          .join("")
+          .trim();
+
+        if (text) flexTexts.push(text);
+      }
     }
   }
 
   const title = flexTexts[0] || null;
   const subtitle = flexTexts[1] || null;
+  const third = flexTexts[2] || null;
 
   let artists = [];
   let album = null;
@@ -50,58 +95,156 @@ function pickMusicItem(renderer) {
   let plays = null;
 
   if (subtitle) {
-    const parts = subtitle.split('•').map(v => v.trim()).filter(Boolean);
-    const durationIndex = parts.findIndex(v => /^\d+:\d+(?::\d+)?$/.test(v));
+    const parts = subtitle
+      .split("•")
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    const durationIndex = parts.findIndex(
+      value => /^\d+:\d+(?::\d+)?$/.test(value)
+    );
 
     if (durationIndex >= 0) {
       duration = parts[durationIndex];
       plays = parts[durationIndex + 1] || null;
-      const before = parts.slice(0, durationIndex);
-      if (before.length >= 2) {
-        artists = [before[0]];
-        album = before.slice(1).join(' • ');
-      } else if (before.length === 1) {
-        artists = before;
+
+      const beforeDuration = parts.slice(0, durationIndex);
+
+      if (beforeDuration.length >= 2) {
+        artists = [beforeDuration[0]];
+        album = beforeDuration.slice(1).join(" • ");
+      } else if (beforeDuration.length === 1) {
+        artists = beforeDuration;
       }
     } else if (parts.length >= 2) {
       artists = [parts[0]];
-      album = parts.slice(1).join(' • ');
+      album = parts.slice(1).join(" • ");
     } else {
       artists = parts;
     }
   }
 
-  let type = 'browse';
-  if (pageType === 'MUSIC_PAGE_TYPE_TRACK' || isVideoId(videoId)) type = 'song';
-  else if (pageType) type = pageType;
+  const badges = [];
+
+  for (const badge of item?.badges || []) {
+    const text =
+      badge?.musicInlineBadgeRenderer?.accessibilityData
+        ?.accessibilityData?.label ||
+      badge?.musicInlineBadgeRenderer?.icon?.iconType;
+
+    if (text) badges.push(text);
+  }
+
+  const watchUrl = isVideoId(videoId)
+    ? `${BASE}/watch?v=${videoId}`
+    : null;
+
+  let type = "browse";
+
+  if (pageType === "MUSIC_PAGE_TYPE_TRACK") {
+    type = "song";
+  } else if (isVideoId(videoId)) {
+    type = "song";
+  } else if (pageType) {
+    type = pageType;
+  }
 
   return {
     type,
     videoId,
-    watchUrl: isVideoId(videoId) ? `${BASE}/watch?v=${videoId}` : null,
+    watchUrl,
     browseId,
     title,
     artists,
     album,
     duration,
     plays,
-    thumbnail: getThumbnail(item)
+    thumbnail: getThumbnail(item),
+    badges,
+    raw: { flexTexts, third }
   };
 }
 
-function collectSongs(data) {
+async function callSearch(query, params, continuation = null) {
+  if (!API_KEY) {
+    throw new Error("YOUTUBE_API_KEY belum diset di Vercel Environment Variables.");
+  }
+
+  const body = {
+    context: {
+      client: {
+        clientName: "WEB_REMIX",
+        clientVersion: CLIENT_VERSION,
+        hl: "id",
+        gl: "ID"
+      }
+    },
+    query,
+    params
+  };
+
+  if (continuation) body.continuation = continuation;
+
+  const url =
+    `${BASE}/youtubei/v1/search` +
+    `?key=${encodeURIComponent(API_KEY)}` +
+    `&prettyPrint=false`;
+
+  const response = await client.post(url, body);
+
+  if (response.status >= 400) {
+    const error =
+      typeof response.data === "string"
+        ? response.data
+        : JSON.stringify(response.data);
+
+    throw new Error(
+      `YouTube Music HTTP ${response.status}: ${error.slice(0, 300)}`
+    );
+  }
+
+  let data = response.data;
+
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      throw new Error("Response YouTube Music bukan JSON valid.");
+    }
+  }
+
+  return data;
+}
+
+function collectFromResponse(data, filterType = "songs") {
   const output = [];
-  const tabs = data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
+
+  const tabs =
+    data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
 
   for (const tab of tabs) {
-    const sections = tab?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+    const sections =
+      tab?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+
     for (const section of sections) {
-      const shelf = section?.musicShelfRenderer || section?.musicCardShelfRenderer;
+      const shelf =
+        section?.musicShelfRenderer ||
+        section?.musicCardShelfRenderer;
+
       if (!shelf) continue;
 
       for (const item of shelf.contents || []) {
         const picked = pickMusicItem(item);
-        if (picked && isVideoId(picked.videoId)) output.push(picked);
+        if (!picked) continue;
+
+        if (
+          filterType === "songs" &&
+          !isVideoId(picked.videoId)
+        ) {
+          continue;
+        }
+
+        output.push(picked);
       }
     }
   }
@@ -110,100 +253,87 @@ function collectSongs(data) {
 }
 
 function findContinuation(data) {
-  const tabs = data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
+  const tabs =
+    data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
+
   for (const tab of tabs) {
-    const contents = tab?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+    const contents =
+      tab?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+
     for (const section of contents) {
-      const token =
-        section?.musicShelfRenderer?.continuations?.[0]?.nextContinuationData?.continuation ||
-        section?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-      if (token) return token;
+      const continuation =
+        section?.musicShelfRenderer?.continuations?.[0]
+          ?.nextContinuationData?.continuation ||
+        section?.continuationItemRenderer?.continuationEndpoint
+          ?.continuationCommand?.token;
+
+      if (continuation) return continuation;
     }
   }
+
   return null;
 }
 
-async function callSearch(query, continuation = null) {
-  if (!API_KEY) throw new Error('YTMUSIC_API_KEY belum diset di Vercel Environment Variables.');
+async function search(query, type = "songs", limit = 20) {
+  if (!query || !query.trim()) {
+    throw new Error("Query kosong.");
+  }
 
-  const body = {
-    context: {
-      client: {
-        clientName: 'WEB_REMIX',
-        clientVersion: CLIENT_VERSION,
-        hl: 'id',
-        gl: 'ID'
-      }
-    },
+  limit = Number(limit);
+
+  if (!Number.isFinite(limit) || limit <= 0) limit = 20;
+  limit = Math.min(Math.floor(limit), 100);
+
+  const paramKey = PARAMS[type] ? type : "songs";
+  const params = PARAMS[paramKey];
+
+  const allItems = [];
+  let continuation = null;
+
+  for (let page = 0; page < 5; page++) {
+    const data = await callSearch(query, params, continuation);
+    const items = collectFromResponse(data, paramKey);
+
+    allItems.push(...items);
+
+    if (allItems.length >= limit) break;
+
+    continuation = findContinuation(data);
+    if (!continuation) break;
+
+    await new Promise(resolve => setTimeout(resolve, 800));
+  }
+
+  return {
+    mode: "search",
     query,
-    params: PARAMS.songs
+    type: paramKey,
+    count: Math.min(allItems.length, limit),
+    items: allItems.slice(0, limit)
   };
-
-  if (continuation) body.continuation = continuation;
-
-  const response = await axios.post(
-    `${BASE}/youtubei/v1/search?key=${encodeURIComponent(API_KEY)}&prettyPrint=false`,
-    body,
-    {
-      timeout: 25000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-A536E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
-        'Origin': BASE,
-        'Referer': `${BASE}/`
-      },
-      validateStatus: status => status < 600,
-      transformResponse: [data => data]
-    }
-  );
-
-  if (response.status >= 400) {
-    const error = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-    throw new Error(`YouTube Music HTTP ${response.status}: ${error.slice(0, 300)}`);
-  }
-
-  let data = response.data;
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); }
-    catch { throw new Error('Respons YouTube Music bukan JSON valid.'); }
-  }
-  return data;
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'GET') return res.status(405).json({ status: false, message: 'Method not allowed' });
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
 
   try {
-    const query = String(req.query?.q || '').trim();
-    const limit = Math.min(Math.max(Number(req.query?.limit) || 20, 1), 50);
-    if (!query) return res.status(400).json({ status: false, message: 'Query kosong.' });
+    const query = String(req.query?.q || "").trim();
+    const type = String(req.query?.type || "songs").trim();
+    const limit = req.query?.limit || 20;
 
-    const allItems = [];
-    let continuation = null;
+    const data = await search(query, type, limit);
 
-    for (let page = 0; page < 5 && allItems.length < limit; page++) {
-      const data = await callSearch(query, continuation);
-      allItems.push(...collectSongs(data));
-      continuation = findContinuation(data);
-      if (!continuation) break;
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
-    const items = allItems.slice(0, limit);
     return res.status(200).json({
-      author: 'xvlovers',
+      author: "xvlovers",
       status: true,
-      data: { mode: 'search', query, type: 'songs', count: items.length, items }
+      data
     });
   } catch (error) {
-    return res.status(500).json({ author: 'xvlovers', status: false, message: error.message });
+    return res.status(500).json({
+      author: "xvlovers",
+      status: false,
+      message: error?.message || "Search error"
+    });
   }
 };
