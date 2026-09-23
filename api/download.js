@@ -1,6 +1,4 @@
 const axios = require('axios');
-const { CookieJar } = require('tough-cookie');
-const { wrapper } = require('axios-cookiejar-support');
 
 const CONFIG = {
   baseUrl: 'https://downr.org',
@@ -9,125 +7,188 @@ const CONFIG = {
   userAgent: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36'
 };
 
-function createClient() {
-  const jar = new CookieJar();
-  return wrapper(axios.create({
-    jar,
-    withCredentials: true,
-    headers: {
-      'User-Agent': CONFIG.userAgent,
-      'Accept': '*/*'
-    }
-  }));
+function bodyText(data) {
+  if (typeof data === 'string') return data;
+  try { return JSON.stringify(data ?? {}); } catch { return String(data ?? ''); }
 }
 
-function chooseAudio(medias) {
-  const audios = (Array.isArray(medias) ? medias : []).filter(media =>
-    String(media?.type || '').toLowerCase() === 'audio' && media?.url
-  );
-  if (!audios.length) return null;
-
-  // Utamakan M4A, lalu pilih bitrate paling dekat dengan 128 kbps.
-  const m4a = audios.filter(media => String(media?.extension || '').toLowerCase() === 'm4a');
-  const pool = m4a.length ? m4a : audios;
-  return pool.slice().sort((a, b) =>
-    Math.abs(Number(a?.bitrate || 0) - 128000) -
-    Math.abs(Number(b?.bitrate || 0) - 128000)
-  )[0];
+function cookieHeader(setCookie) {
+  if (!Array.isArray(setCookie)) return '';
+  return setCookie.map(v => String(v).split(';', 1)[0]).filter(Boolean).join('; ');
 }
 
-async function downloadVideo(targetUrl) {
-  const client = createClient();
+function mergeCookies(oldCookie, setCookie) {
+  const map = new Map();
+  for (const part of String(oldCookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) map.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+  }
+  for (const part of String(setCookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) map.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+  }
+  return [...map].map(([k, v]) => `${k}=${v}`).join('; ');
+}
 
-  const mintRes = await client.get(`${CONFIG.baseUrl}${CONFIG.mintEndpoint}`, {
-    timeout: 15000
+async function request(method, url, options = {}) {
+  return axios({
+    method,
+    url,
+    timeout: options.timeout || 60000,
+    data: options.data,
+    headers: options.headers || {},
+    validateStatus: () => true,
+    transformResponse: [data => data]
   });
+}
 
-  if (mintRes.status !== 200) {
-    throw new Error(`Gagal minting sesi. Status: ${mintRes.status}`);
-  }
+async function getDownrData(targetUrl) {
+  let lastError = null;
+  const userAgents = [CONFIG.userAgent, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'];
 
-  const res = await client.post(
-    `${CONFIG.baseUrl}${CONFIG.downloadEndpoint}`,
-    { url: targetUrl },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': CONFIG.baseUrl,
-        'Referer': `${CONFIG.baseUrl}/`
-      },
-      timeout: 60000,
-      validateStatus: status => status < 600
+  for (const ua of userAgents) {
+    let cookies = '';
+    try {
+      const home = await request('GET', CONFIG.baseUrl + '/', {
+        timeout: 30000,
+        headers: {
+          'User-Agent': ua,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Upgrade-Insecure-Requests': '1'
+        }
+      });
+      cookies = mergeCookies(cookies, cookieHeader(home.headers['set-cookie']));
+
+      const mint = await request('GET', CONFIG.baseUrl + CONFIG.mintEndpoint, {
+        timeout: 30000,
+        headers: {
+          'User-Agent': ua,
+          'Accept': '*/*',
+          'Referer': CONFIG.baseUrl + '/',
+          ...(cookies ? { Cookie: cookies } : {})
+        }
+      });
+      cookies = mergeCookies(cookies, cookieHeader(mint.headers['set-cookie']));
+
+      // /analytics is a session-mint endpoint. Some server-side requests can
+      // receive 403 even though the Downr page/session is usable, so it is not
+      // treated as fatal by itself.
+      const response = await request('POST', CONFIG.baseUrl + CONFIG.downloadEndpoint, {
+        timeout: 60000,
+        data: { url: targetUrl },
+        headers: {
+          'User-Agent': ua,
+          'Accept': '*/*',
+          'Content-Type': 'application/json',
+          'Origin': CONFIG.baseUrl,
+          'Referer': CONFIG.baseUrl + '/',
+          ...(cookies ? { Cookie: cookies } : {})
+        }
+      });
+
+      let data = response.data;
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch {}
+      }
+
+      if (response.status >= 200 && response.status < 300 && data) {
+        return { data, status: response.status };
+      }
+
+      lastError = new Error(`Downr /bbc HTTP ${response.status}: ${bodyText(data).slice(0, 500)}`);
+    } catch (err) {
+      lastError = err;
     }
-  );
-
-  if (res.status === 403 && res.data === 'user_retry_required') {
-    throw new Error('Downr mengembalikan user_retry_required. Session/cookie tidak diterima.');
   }
 
-  if (res.status >= 400) {
-    const message = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-    throw new Error(`Downr HTTP ${res.status}: ${message.slice(0, 300)}`);
+  throw lastError || new Error('Gagal mendapatkan response dari Downr.');
+}
+
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function selectAudio(data) {
+  const medias = Array.isArray(data?.medias) ? data.medias : [];
+  const audio = medias.filter(m => String(m?.type || '').toLowerCase() === 'audio' && m?.url);
+
+  if (!audio.length) {
+    if (data?.url) return { url: data.url, type: 'audio', ext: data.ext || null, bitrate: data.bitrate || null };
+    return null;
   }
 
-  if (!res.data || (!res.data.url && !Array.isArray(res.data.medias))) {
-    throw new Error('Data media tidak ditemukan dalam respons Downr.');
-  }
+  // Prefer M4A, then choose the bitrate closest to the standard 128 kbps.
+  const m4a = audio.filter(m => String(m?.ext || m?.extension || '').toLowerCase() === 'm4a');
+  const pool = m4a.length ? m4a : audio;
+  const target = 128000;
 
-  return res.data;
+  return [...pool].sort((a, b) => {
+    const ab = toNumber(a.bitrate) ?? Infinity;
+    const bb = toNumber(b.bitrate) ?? Infinity;
+    return Math.abs(ab - target) - Math.abs(bb - target);
+  })[0];
 }
 
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'GET') return res.status(405).json({ status: false, message: 'Method not allowed' });
+  if (req.method !== 'GET') {
+    return res.status(405).json({ author: 'xvlovers', status: false, message: 'Method Not Allowed' });
+  }
+
+  const targetUrl = String(req.query?.url || '').trim();
+  if (!targetUrl) {
+    return res.status(400).json({ author: 'xvlovers', status: false, message: 'Parameter url wajib diisi.' });
+  }
 
   try {
-    const targetUrl = String(req.query?.url || '').trim();
-    if (!targetUrl) return res.status(400).json({ status: false, message: 'Parameter url kosong.' });
-
-    let parsed;
-    try { parsed = new URL(targetUrl); }
-    catch { return res.status(400).json({ status: false, message: 'URL tidak valid.' }); }
-
-    if (!['https:', 'http:'].includes(parsed.protocol)) {
-      return res.status(400).json({ status: false, message: 'Protocol URL tidak didukung.' });
+    const parsed = new URL(targetUrl);
+    if (!['youtube.com', 'www.youtube.com', 'music.youtube.com', 'm.youtube.com', 'youtu.be'].includes(parsed.hostname)) {
+      return res.status(400).json({ author: 'xvlovers', status: false, message: 'URL harus berasal dari YouTube/YouTube Music.' });
     }
+  } catch {
+    return res.status(400).json({ author: 'xvlovers', status: false, message: 'URL tidak valid.' });
+  }
 
-    const data = await downloadVideo(targetUrl);
-    const audio = chooseAudio(data.medias);
+  try {
+    const downr = await getDownrData(targetUrl);
+    const selected = selectAudio(downr.data);
 
-    if (!audio) {
-      return res.status(404).json({
+    if (!selected?.url) {
+      return res.status(502).json({
+        author: 'xvlovers',
         status: false,
-        message: 'Audio tidak ditemukan dalam response Downr.',
-        data
+        stage: 'select-audio',
+        message: 'Downr merespons tetapi tidak menemukan media audio.',
+        downr: downr.data
       });
     }
 
     return res.status(200).json({
+      author: 'xvlovers',
       status: true,
       data: {
-        source: data.source || targetUrl,
-        title: data.title || null,
-        thumbnail: data.thumbnail || null,
-        audio: {
-          url: audio.url,
-          extension: audio.extension || null,
-          type: audio.type || 'audio',
-          bitrate: Number(audio.bitrate || 0),
-          bitrateKbps: Number(audio.bitrate || 0) ? Math.round(Number(audio.bitrate) / 1000) : null,
-          size: audio.formattedSize || audio.size || null,
-          quality: audio.quality || null
-        }
-      }
+        url: selected.url,
+        type: selected.type || 'audio',
+        ext: selected.ext || selected.extension || null,
+        bitrate: selected.bitrate || null,
+        quality: selected.quality || null,
+        title: downr.data?.title || null,
+        thumbnail: downr.data?.thumbnail || null,
+        sourceUrl: targetUrl
+      },
+      downr: downr.data
     });
   } catch (error) {
-    const status = /user_retry_required/i.test(error.message) ? 502 : 500;
-    return res.status(status).json({ status: false, message: error.message });
+    console.error('[download]', error);
+    return res.status(502).json({
+      author: 'xvlovers',
+      status: false,
+      stage: 'downr',
+      message: error?.message || 'Gagal mengambil link audio dari Downr.'
+    });
   }
 };
